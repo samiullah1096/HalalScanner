@@ -57,6 +57,26 @@ export class APIIntegrator {
     }
   }
 
+  async searchOpenFoodFactsByName(productName: string): Promise<APIResult> {
+    try {
+      const response = await axios.get(
+        `https://world.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(productName)}&search_simple=1&action=process&json=1&page_size=5`,
+        { timeout: this.timeout }
+      );
+
+      if (response.data.products && response.data.products.length > 0) {
+        return {
+          source: 'OpenFoodFacts Search',
+          success: true,
+          data: response.data.products[0]
+        };
+      }
+      return { source: 'OpenFoodFacts Search', success: false, error: 'No products found' };
+    } catch (error) {
+      return { source: 'OpenFoodFacts Search', success: false, error: 'Search failed' };
+    }
+  }
+
   async fetchFoodRepo(barcode: string): Promise<APIResult> {
     try {
       const response = await axios.get(
@@ -374,11 +394,21 @@ export class APIIntegrator {
     const quranData: QuranAyah[] = [];
     const hadithData: HadithData[] = [];
 
-    const productAPIs = await Promise.allSettled([
-      this.fetchOpenFoodFacts(barcode),
-      this.fetchFoodRepo(barcode),
-      this.fetchOpenProductData(barcode),
-    ]);
+    const isBarcode = /^\d+$/.test(barcode.trim());
+
+    let productAPIs;
+    if (isBarcode) {
+      productAPIs = await Promise.allSettled([
+        this.fetchOpenFoodFacts(barcode),
+        this.fetchFoodRepo(barcode),
+        this.fetchOpenProductData(barcode),
+      ]);
+    } else {
+      productAPIs = await Promise.allSettled([
+        this.searchOpenFoodFactsByName(barcode),
+        this.fetchUSDAFoods(barcode),
+      ]);
+    }
 
     productAPIs.forEach((result) => {
       if (result.status === 'fulfilled') {
@@ -387,28 +417,72 @@ export class APIIntegrator {
     });
 
     let productData: ProductData | null = null;
-    const openFoodResult = productAPIs[0];
 
-    if (openFoodResult.status === 'fulfilled' && openFoodResult.value.success && openFoodResult.value.data) {
-      const p = openFoodResult.value.data;
-      productData = {
-        name: p.product_name || productName || 'Unknown Product',
-        barcode,
-        brand: p.brands,
-        ingredients: p.ingredients_text?.split(',').map((i: string) => i.trim()) || [],
-        categories: p.categories?.split(',').map((c: string) => c.trim()) || [],
-        imageUrl: p.image_url,
-        manufacturingCountry: p.manufacturing_places || p.countries,
-        nutriments: p.nutriments
-      };
+    for (const result of productAPIs) {
+      if (result.status === 'fulfilled' && result.value.success && result.value.data) {
+        const p = result.value.data;
 
-      if (p.brands) {
+        if (result.value.source.includes('OpenFoodFacts')) {
+          productData = {
+            name: p.product_name || productName || barcode,
+            barcode: p.code || barcode,
+            brand: p.brands,
+            ingredients: p.ingredients_text?.split(',').map((i: string) => i.trim()).filter(Boolean) || [],
+            categories: p.categories?.split(',').map((c: string) => c.trim()).filter(Boolean) || [],
+            imageUrl: p.image_url,
+            manufacturingCountry: p.manufacturing_places || p.countries,
+            nutriments: p.nutriments
+          };
+          break;
+        } else if (result.value.source === 'FoodRepo') {
+          productData = {
+            name: p.name || p.display_name || productName || barcode,
+            barcode: p.barcode || barcode,
+            brand: p.brand || p.manufacturer,
+            ingredients: p.ingredients?.map((i: any) => typeof i === 'string' ? i : i.name).filter(Boolean) || [],
+            categories: Array.isArray(p.categories) ? p.categories : [],
+            imageUrl: p.images?.[0]?.url || p.image,
+            manufacturingCountry: p.origin || p.country,
+            nutriments: p.nutrients
+          };
+          break;
+        } else if (result.value.source === 'OpenProductData') {
+          productData = {
+            name: p.name || p.product_name || productName || barcode,
+            barcode: p.barcode || barcode,
+            brand: p.brand || p.brands,
+            ingredients: Array.isArray(p.ingredients) ? p.ingredients : (p.ingredients_text?.split(',').map((i: string) => i.trim()).filter(Boolean) || []),
+            categories: Array.isArray(p.categories) ? p.categories : (p.categories?.split(',').map((c: string) => c.trim()).filter(Boolean) || []),
+            imageUrl: p.image_url || p.image,
+            manufacturingCountry: p.country || p.origin,
+            nutriments: p.nutriments || p.nutrition
+          };
+          break;
+        } else if (result.value.source === 'USDA Foods') {
+          const food = p.foods?.[0] || p;
+          productData = {
+            name: food.description || productName || barcode,
+            barcode: barcode,
+            brand: food.brandOwner || food.brandName,
+            ingredients: food.ingredients?.split(',').map((i: string) => i.trim()).filter(Boolean) || [],
+            categories: [food.foodCategory || 'Food'].filter(Boolean),
+            imageUrl: undefined,
+            manufacturingCountry: undefined,
+            nutriments: food.foodNutrients
+          };
+          break;
+        }
+      }
+    }
+
+    if (productData) {
+      if (productData.brand) {
         const brandAPIs = await Promise.allSettled([
-          this.fetchWikipedia(p.brands),
-          this.fetchWikidata(p.brands),
-          this.fetchDBpedia(p.brands),
-          this.checkIsraelLinkage(p.brands),
-          this.fetchOpenSanctions(p.brands)
+          this.fetchWikipedia(productData.brand),
+          this.fetchWikidata(productData.brand),
+          this.fetchDBpedia(productData.brand),
+          this.checkIsraelLinkage(productData.brand),
+          this.fetchOpenSanctions(productData.brand)
         ]);
 
         brandAPIs.forEach((result) => {
@@ -418,11 +492,11 @@ export class APIIntegrator {
         });
       }
 
-      if (p.countries) {
+      if (productData.manufacturingCountry) {
         const countryAPIs = await Promise.allSettled([
-          this.fetchRESTCountries(p.countries),
-          this.fetchGeoNames(p.countries),
-          this.fetchWorldBank(p.countries.substring(0, 3).toUpperCase())
+          this.fetchRESTCountries(productData.manufacturingCountry),
+          this.fetchGeoNames(productData.manufacturingCountry),
+          this.fetchWorldBank(productData.manufacturingCountry.substring(0, 3).toUpperCase())
         ]);
 
         countryAPIs.forEach((result) => {
@@ -432,16 +506,16 @@ export class APIIntegrator {
         });
       }
 
-      if (p.categories) {
-        const altResult = await this.fetchAlternatives(p.categories);
+      if (productData.categories && productData.categories.length > 0) {
+        const altResult = await this.fetchAlternatives(productData.categories[0]);
         results.push(altResult);
       }
 
-      if (p.product_name) {
+      if (productData.name) {
         const fdaAPIs = await Promise.allSettled([
-          this.fetchFDAEnforcement(p.product_name),
-          this.fetchOpenFDA(p.product_name),
-          this.fetchUSDAFoods(p.product_name)
+          this.fetchFDAEnforcement(productData.name),
+          this.fetchOpenFDA(productData.name),
+          this.fetchUSDAFoods(productData.name)
         ]);
 
         fdaAPIs.forEach((result) => {

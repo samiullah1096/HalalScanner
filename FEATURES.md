@@ -21,10 +21,13 @@
 
 ## ✅ Product Information
 
-- [x] **OpenFoodFacts Integration** - Primary product database
-- [x] **FoodRepo Data** - Additional product information
-- [x] **Open Product Data** - Tertiary data source
-- [x] **Opendatasoft Database** - Fourth product database
+- [x] **OpenFoodFacts Integration** - Primary product database (barcode search)
+- [x] **OpenFoodFacts Name Search** - Search by product name
+- [x] **FoodRepo Data** - Additional product information (barcode)
+- [x] **Open Product Data** - Tertiary data source (barcode)
+- [x] **USDA Foods Database** - Product name search fallback
+- [x] **Multi-API Fallback** - Tries all APIs until product is found
+- [x] **Smart Search Detection** - Auto-detects barcode vs name search
 - [x] **Ingredient List** - Complete ingredient breakdown
 - [x] **Nutritional Info** - Nutritional data display
 - [x] **Product Images** - Product photo display

@@ -41,7 +41,9 @@ export default function Home() {
   const { toast } = useToast();
 
   const handleSearch = async (query: string) => {
-    if (!query || query.length < 3) {
+    const trimmedQuery = query.trim();
+
+    if (!trimmedQuery || trimmedQuery.length < 3) {
       toast({
         title: 'Invalid Input',
         description: 'Please enter at least 3 characters',
@@ -55,17 +57,30 @@ export default function Home() {
 
     try {
       const integrator = new APIIntegrator();
+
+      toast({
+        title: 'Searching...',
+        description: 'Fetching product information from multiple databases',
+      });
+
       const { product, apiResults, successCount, quranEvidence, hadithEvidence } =
-        await integrator.fetchAllData(query, searchQuery);
+        await integrator.fetchAllData(trimmedQuery, trimmedQuery);
 
       if (!product) {
         toast({
           title: 'Product Not Found',
-          description: 'No information found. Try a different barcode or product name.',
+          description: 'No information found in any database. Please check the barcode or try a different product name.',
           variant: 'destructive'
         });
         setLoading(false);
         return;
+      }
+
+      if (!product.ingredients || product.ingredients.length === 0) {
+        toast({
+          title: 'Limited Information',
+          description: 'Product found but ingredient information is not available. Verdict may be incomplete.',
+        });
       }
 
       const verdict = analyzeIngredients(product.ingredients);

@@ -46,8 +46,12 @@ export function analyzeIngredients(ingredients: string[]): HalalVerdict {
   if (!ingredients || ingredients.length === 0) {
     return {
       status: 'doubtful',
-      confidence: 40,
-      reasons: ['No ingredient information available'],
+      confidence: 30,
+      reasons: [
+        'No ingredient information available in any database',
+        'Unable to determine if product is Halal or Haram',
+        'Please verify with manufacturer or local Islamic authority'
+      ],
       ingredients: []
     };
   }
